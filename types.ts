@@ -3,6 +3,19 @@ export interface Message {
   content: string;
   timestamp: number;
   isError?: boolean;
+  plan?: Plan; // Optional plan attached to a message
+}
+
+export interface Step {
+  id: number;
+  title: string;
+  description: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+}
+
+export interface Plan {
+  title: string;
+  steps: Step[];
 }
 
 export interface File {

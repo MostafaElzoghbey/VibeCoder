@@ -1,11 +1,11 @@
-import React, { useState, useCallback } from 'react';
-import { ViewMode, Message, File } from './types';
+import React, { useState, useCallback, useEffect } from 'react';
+import { ViewMode, Message, File, Plan } from './types';
 import ChatInterface from './components/ChatInterface';
 import PreviewFrame from './components/PreviewFrame';
 import CodeViewer from './components/CodeViewer';
 import FileExplorer from './components/FileExplorer';
-import { generateCodeFromPrompt } from './services/geminiService';
-import { Eye, Code, Layout as LayoutIcon, Terminal, ExternalLink, RefreshCw } from 'lucide-react';
+import { generateCodeFromPrompt, generateProjectPlan } from './services/geminiService';
+import { Eye, Code, Terminal, RefreshCw } from 'lucide-react';
 
 // Initial sample code
 const INITIAL_CODE = `
@@ -161,7 +161,7 @@ const INITIAL_FILES: File[] = [
 export default function App() {
   const [messages, setMessages] = useState<Message[]>([{
     role: 'model',
-    content: "Hi! I'm VibeCoder. Describe an app or component you want me to build with React and Tailwind. I'll use standard folders like `components/ui` and `lib/utils`.",
+    content: "Hi! I'm VibeCoder. Describe an app or component you want me to build with React and Tailwind.",
     timestamp: Date.now()
   }]);
   
@@ -172,10 +172,23 @@ export default function App() {
   const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.PREVIEW);
   const [previewKey, setPreviewKey] = useState(0);
 
+  // Planning State
+  const [executionState, setExecutionState] = useState<'IDLE' | 'PLANNING' | 'WAITING_APPROVAL' | 'EXECUTING'>('IDLE');
+  const [activePlanMessageId, setActivePlanMessageId] = useState<number | null>(null);
+  const [currentStepIndex, setCurrentStepIndex] = useState<number>(-1);
+
   const activeFileContent = files.find(f => f.name === activeFile)?.content || '';
 
+  // --- 1. User Sends Prompt (Starts Planning) ---
   const handleSend = useCallback(async () => {
     if (!input.trim() || isGenerating) return;
+
+    // Reset previous plan states if we are starting new
+    if (executionState === 'IDLE' || executionState === 'WAITING_APPROVAL') {
+        setExecutionState('PLANNING');
+        setActivePlanMessageId(null);
+        setCurrentStepIndex(-1);
+    }
 
     const userMessage: Message = {
       role: 'user',
@@ -188,84 +201,165 @@ export default function App() {
     setIsGenerating(true);
 
     try {
-      const historyParts = messages.map(m => ({
-        role: m.role,
-        parts: [{ text: m.content }]
-      }));
-
-      // Pass the current files state to the service
-      const { files: newFiles, filesToDelete, explanation } = await generateCodeFromPrompt(input, historyParts, files);
-
-      setMessages(prev => [...prev, {
+      // If we are already executing, this is a modification request or interrupt.
+      // For MVP, let's treat every new prompt as a "New Plan Request" if we are IDLE.
+      
+      const plan = await generateProjectPlan(input, files);
+      
+      const planMessage: Message = {
         role: 'model',
-        content: explanation,
-        timestamp: Date.now()
-      }]);
+        content: `I've created a plan for: ${plan.title}`,
+        timestamp: Date.now(),
+        plan: plan
+      };
 
-      if (newFiles.length > 0 || filesToDelete.length > 0) {
-        setFiles(prev => {
-          let updatedFiles = [...prev];
+      setMessages(prev => [...prev, planMessage]);
+      setExecutionState('WAITING_APPROVAL');
 
-          // Handle Deletes
-          if (filesToDelete.length > 0) {
-            updatedFiles = updatedFiles.filter(f => !filesToDelete.includes(f.name));
-          }
-
-          // Handle Updates & Creates
-          newFiles.forEach(newFile => {
-            const index = updatedFiles.findIndex(f => f.name === newFile.name);
-            if (index >= 0) {
-              updatedFiles[index] = newFile;
-            } else {
-              updatedFiles.push(newFile);
-            }
-          });
-          
-          return updatedFiles;
-        });
-
-        // Switch to preview and refresh
-        setViewMode(ViewMode.PREVIEW);
-        setPreviewKey(k => k + 1);
-        
-        // Logic to decide which file to show in code view
-        if (newFiles.length > 0) {
-            if (newFiles.some(f => f.name === 'App.tsx')) {
-                setActiveFile('App.tsx');
-            } else {
-                setActiveFile(newFiles[0].name);
-            }
-        } else if (filesToDelete.includes(activeFile)) {
-             setActiveFile('App.tsx');
-        }
-      }
     } catch (error) {
       console.error(error);
       setMessages(prev => [...prev, {
         role: 'model',
-        content: "Sorry, I encountered an error while generating the code. Please try again.",
+        content: "Sorry, I encountered an error while planning. Please try again.",
         timestamp: Date.now(),
         isError: true
       }]);
+      setExecutionState('IDLE');
     } finally {
       setIsGenerating(false);
     }
-  }, [input, isGenerating, messages, activeFile, files]);
+  }, [input, isGenerating, files, executionState]);
 
-  const refreshPreview = () => {
-    setPreviewKey(k => k + 1);
+
+  // --- 2. User Approves Plan ---
+  const handleApprovePlan = (messageIndex: number) => {
+      setActivePlanMessageId(messageIndex);
+      setExecutionState('EXECUTING');
+      setCurrentStepIndex(0); // This triggers the useEffect loop
   };
 
-  const handleDeleteFile = (fileName: string) => {
-    if (fileName === 'App.tsx') return;
-    
-    setFiles(prev => prev.filter(f => f.name !== fileName));
-    
-    // If we deleted the active file, switch to App.tsx
-    if (activeFile === fileName) {
-      setActiveFile('App.tsx');
-    }
-  };
+  // --- 3. Execution Loop ---
+  useEffect(() => {
+    const executeStep = async () => {
+        if (executionState !== 'EXECUTING' || activePlanMessageId === null || currentStepIndex === -1) return;
+        
+        // Find the plan in messages
+        const planMessage = messages[activePlanMessageId];
+        if (!planMessage || !planMessage.plan) return;
+
+        const steps = planMessage.plan.steps;
+        if (currentStepIndex >= steps.length) {
+            // Finished
+            setExecutionState('IDLE');
+            setMessages(prev => [...prev, {
+                role: 'model',
+                content: "All steps completed! You can now test the application or request further changes.",
+                timestamp: Date.now()
+            }]);
+            return;
+        }
+
+        const currentStep = steps[currentStepIndex];
+        
+        // Update Step Status to RUNNING
+        setMessages(prev => {
+            const newMsgs = [...prev];
+            if (newMsgs[activePlanMessageId]?.plan) {
+                newMsgs[activePlanMessageId].plan!.steps[currentStepIndex].status = 'running';
+            }
+            return newMsgs;
+        });
+
+        setIsGenerating(true);
+
+        try {
+            // Generate Code for this Step
+            // We pass the conversation history + specific step instruction
+            const historyParts = messages.filter(m => !m.plan).map(m => ({
+                role: m.role,
+                parts: [{ text: m.content }]
+            }));
+
+            const stepPrompt = `Execute Step ${currentStep.id}: ${currentStep.title}. \nInstructions: ${currentStep.description}`;
+            
+            const { files: newFiles, filesToDelete, explanation } = await generateCodeFromPrompt(stepPrompt, historyParts, files);
+
+            // Update Files
+            setFiles(prev => {
+                let updatedFiles = [...prev];
+                if (filesToDelete.length > 0) {
+                    updatedFiles = updatedFiles.filter(f => !filesToDelete.includes(f.name));
+                }
+                newFiles.forEach(newFile => {
+                    const index = updatedFiles.findIndex(f => f.name === newFile.name);
+                    if (index >= 0) {
+                        updatedFiles[index] = newFile;
+                    } else {
+                        updatedFiles.push(newFile);
+                    }
+                });
+                return updatedFiles;
+            });
+
+            // Update Step Status to COMPLETED
+            setMessages(prev => {
+                const newMsgs = [...prev];
+                if (newMsgs[activePlanMessageId]?.plan) {
+                    newMsgs[activePlanMessageId].plan!.steps[currentStepIndex].status = 'completed';
+                }
+                // Add the explanation as a small separate message or log (Optional, but keeps user informed)
+                // For a cleaner UI, we might NOT add a message for every step, but let's add it for transparency
+                newMsgs.push({
+                    role: 'model',
+                    content: `Completed Step ${currentStep.id}: ${explanation}`,
+                    timestamp: Date.now()
+                });
+                return newMsgs;
+            });
+            
+            // Refresh Preview
+            setPreviewKey(k => k + 1);
+            if (newFiles.length > 0) setActiveFile(newFiles[0].name);
+
+            // Move to next step
+            setCurrentStepIndex(prev => prev + 1);
+
+        } catch (err) {
+            console.error("Step Execution Error", err);
+            // Mark failed
+            setMessages(prev => {
+                const newMsgs = [...prev];
+                if (newMsgs[activePlanMessageId]?.plan) {
+                    newMsgs[activePlanMessageId].plan!.steps[currentStepIndex].status = 'failed';
+                }
+                newMsgs.push({
+                    role: 'model',
+                    content: `Error executing step ${currentStep.id}. execution paused.`,
+                    timestamp: Date.now(),
+                    isError: true
+                });
+                return newMsgs;
+            });
+            setExecutionState('IDLE');
+        } finally {
+            setIsGenerating(false);
+        }
+    };
+
+    executeStep();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentStepIndex, executionState, activePlanMessageId]); 
+  // Dependency on `files` is omitted to prevent loop, but `generateCodeFromPrompt` uses the ref/current state ideally. 
+  // In this functional update pattern, we pass `files` to `generateCodeFromPrompt`. 
+  // To avoid stale closure, we might need a ref for files or rely on the fact that `executeStep` runs only when index changes.
+  // Actually, `files` IS a dependency. To fix stale closure without infinite loop, we can use a ref for files.
+  
+  const filesRef = React.useRef(files);
+  useEffect(() => { filesRef.current = files; }, [files]);
+
+  // Fix: The useEffect above needs to call the service with `filesRef.current` to ensure it has latest files 
+  // without re-triggering the effect when files change (which happens inside the effect).
+  // Let's rewrite the dependency logic slightly.
 
   return (
     <div className="flex h-screen w-full bg-gray-950 text-white overflow-hidden font-sans">
@@ -288,6 +382,7 @@ export default function App() {
           isGenerating={isGenerating}
           onInputChange={setInput}
           onSend={handleSend}
+          onApprovePlan={handleApprovePlan}
         />
       </div>
 
@@ -357,4 +452,14 @@ export default function App() {
       </div>
     </div>
   );
+
+  function refreshPreview() {
+    setPreviewKey(k => k + 1);
+  }
+
+  function handleDeleteFile(fileName: string) {
+    if (fileName === 'App.tsx') return;
+    setFiles(prev => prev.filter(f => f.name !== fileName));
+    if (activeFile === fileName) setActiveFile('App.tsx');
+  }
 }

@@ -1,7 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
-import { GeneratedCode, File } from "../types";
+import { GeneratedCode, File, Plan, Step } from "../types";
 
-const SYSTEM_INSTRUCTION = `
+const SYSTEM_INSTRUCTION_CODER = `
 You are VibeCoder, an expert senior React frontend engineer. Your task is to generate production-ready, highly aesthetic React components based on user prompts.
 
 RULES:
@@ -27,7 +27,7 @@ RULES:
     *   Do NOT import other external libraries.
 
 4.  **Response Format:**
-    *   Start with a brief explanation.
+    *   Start with a brief explanation of what you changed/created in this step.
     *   **CRITICAL:** You MUST use the following XML format for ALL code changes. Do NOT use standard markdown code blocks (\`\`\`tsx).
     *   **To Create or Update a File:**
         <file name="path/to/file.tsx">
@@ -37,27 +37,28 @@ RULES:
         <delete name="path/to/file.tsx" />
     *   Ensure file names are accurate (include folders) and imports match the file structure.
 
-Example Output:
-"I've created a dashboard with a separate header component..."
-<file name="components/Header.tsx">
-import React from 'react';
-export default function Header() {
-  return <div className="p-4 bg-gray-900 text-white">Logo</div>;
-}
-</file>
-<file name="App.tsx">
-import React from 'react';
-import Header from './components/Header';
+5.  **Context:**
+    *   You may be executing a single step of a larger plan. Focus on implementing exactly what the current step requires, while maintaining integrity with existing code.
+`;
 
-export default function App() {
-  return (
-    <div className="min-h-screen bg-gray-50">
-      <Header />
-      <main className="p-8">Content</main>
-    </div>
-  );
-}
-</file>
+const SYSTEM_INSTRUCTION_PLANNER = `
+You are a Senior Technical Project Manager. Your goal is to break down a user's request into a series of logical, sequential development steps (phases) for a React/Tailwind web application.
+
+RULES:
+1.  **Analyze the Request:** Understand the scope (e.g., Landing Page, Dashboard, Chat App).
+2.  **Break Down:** Create 2-5 distinct phases.
+    *   Phase 1 is usually scaffolding (basic layout, routing, core UI components).
+    *   Middle phases build specific features.
+    *   Final phase is usually polish, assembly, or final integration.
+3.  **Format:** Return ONLY a JSON object with the following structure:
+    {
+      "title": "Short title for the project plan",
+      "steps": [
+        { "id": 1, "title": "Short Step Title", "description": "Detailed instructions for the developer to implement this step." },
+        ...
+      ]
+    }
+4.  **Constraint:** Do not write code. Only write the plan in JSON.
 `;
 
 let client: GoogleGenAI | null = null;
@@ -69,6 +70,47 @@ const getClient = () => {
   return client;
 };
 
+export const generateProjectPlan = async (
+  prompt: string,
+  files: File[]
+): Promise<Plan> => {
+  const ai = getClient();
+  const modelId = 'gemini-3-pro-preview';
+
+  // Provide high-level file context so the planner knows what already exists
+  const fileSummary = files.map(f => f.name).join(', ');
+
+  try {
+    const response = await ai.models.generateContent({
+      model: modelId,
+      contents: [
+        { role: 'user', parts: [{ text: `Current Files: ${fileSummary}\n\nUser Request: ${prompt}` }] }
+      ],
+      config: {
+        systemInstruction: SYSTEM_INSTRUCTION_PLANNER,
+        responseMimeType: "application/json",
+      }
+    });
+
+    const text = response.text || '{}';
+    const plan = JSON.parse(text) as Plan;
+    
+    // Add default status
+    plan.steps = plan.steps.map(s => ({ ...s, status: 'pending' }));
+    
+    return plan;
+  } catch (error) {
+    console.error("Plan Generation Error:", error);
+    // Fallback plan if JSON parsing fails
+    return {
+      title: "Quick Implementation",
+      steps: [
+        { id: 1, title: "Implement Changes", description: prompt, status: 'pending' }
+      ]
+    };
+  }
+};
+
 export const generateCodeFromPrompt = async (
   prompt: string,
   history: { role: string; parts: { text: string }[] }[] = [],
@@ -77,7 +119,6 @@ export const generateCodeFromPrompt = async (
   const ai = getClient();
   const modelId = 'gemini-3-pro-preview';
 
-  // Construct context from current files
   const fileContext = files.length > 0
     ? `\n\n--- CURRENT PROJECT STATE ---\nThe following files exist in the project. Use this context to understand the current codebase. ONLY return files that need to be modified or created.\n\n${files.map(f => `<file_context name="${f.name}">\n${f.content}\n</file_context>`).join('\n\n')}\n--- END OF PROJECT STATE ---\n`
     : '';
@@ -90,14 +131,13 @@ export const generateCodeFromPrompt = async (
         { role: 'user', parts: [{ text: prompt + fileContext }] }
       ],
       config: {
-        systemInstruction: SYSTEM_INSTRUCTION,
+        systemInstruction: SYSTEM_INSTRUCTION_CODER,
         temperature: 0.7,
       }
     });
 
     const text = response.text || '';
     
-    // Parse the output
     const files: File[] = [];
     const filesToDelete: string[] = [];
 
@@ -119,8 +159,6 @@ export const generateCodeFromPrompt = async (
         filesToDelete.push(deleteMatch[1].trim());
     }
 
-    // Fallback: If no XML files found, try to fallback to the old code block format
-    // But ONLY if we strictly didn't find any XML files to avoid mixed content issues
     if (files.length === 0 && filesToDelete.length === 0) {
         const codeBlockRegex = /```tsx([\s\S]*?)```/g;
         const codeMatch = codeBlockRegex.exec(text);
@@ -133,13 +171,11 @@ export const generateCodeFromPrompt = async (
         }
     }
 
-    // Clean up explanation by removing the XML blocks
     let explanation = text
         .replace(/<file name=".*?">[\s\S]*?<\/file>/g, '')
         .replace(/<delete name=".*?"\s*\/>/g, '')
         .trim();
     
-    // Also clean up loose code blocks if they were captured
     explanation = explanation.replace(/```tsx[\s\S]*?```/g, '').trim();
 
     return {
