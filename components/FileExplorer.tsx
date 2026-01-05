@@ -1,17 +1,19 @@
 import React from 'react';
-import { FileCode, FileJson, FileType, FolderOpen, Plus } from 'lucide-react';
+import { FileCode, FileJson, FileType, FolderOpen, Plus, Trash2 } from 'lucide-react';
 import { File } from '../types';
 
 interface FileExplorerProps {
   files: File[];
   activeFile: string;
   onFileSelect: (fileName: string) => void;
+  onFileDelete: (fileName: string) => void;
 }
 
 const FileExplorer: React.FC<FileExplorerProps> = ({ 
   files, 
   activeFile, 
-  onFileSelect 
+  onFileSelect,
+  onFileDelete
 }) => {
   return (
     <div className="flex flex-col h-full bg-gray-950 border-r border-gray-800 text-gray-400">
@@ -35,18 +37,34 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
             </div>
             <div className="space-y-0.5">
                 {files.map((file) => (
-                <button
+                <div
                     key={file.name}
                     onClick={() => onFileSelect(file.name)}
-                    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm transition-colors ${
+                    className={`group w-full flex items-center justify-between px-2 py-1.5 rounded-md text-sm transition-colors cursor-pointer ${
                     activeFile === file.name
                         ? 'bg-indigo-600/10 text-indigo-400'
                         : 'hover:bg-gray-900 text-gray-400 hover:text-gray-300'
                     }`}
                 >
-                    <FileIcon name={file.name} />
-                    <span className="truncate">{file.name}</span>
-                </button>
+                    <div className="flex items-center gap-2 truncate">
+                        <FileIcon name={file.name} />
+                        <span className="truncate">{file.name}</span>
+                    </div>
+                    {file.name !== 'App.tsx' && (
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                if (window.confirm(`Are you sure you want to delete ${file.name}?`)) {
+                                    onFileDelete(file.name);
+                                }
+                            }}
+                            className="p-1 opacity-0 group-hover:opacity-100 hover:bg-red-500/10 hover:text-red-400 rounded transition-all"
+                            title="Delete file"
+                        >
+                            <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                    )}
+                </div>
                 ))}
             </div>
         </div>

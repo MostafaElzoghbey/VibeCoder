@@ -147,12 +147,15 @@ export default function App() {
     setPreviewKey(k => k + 1);
   };
 
-  const openInNewTab = () => {
-    // Creating a Blob for the standalone HTML is possible but tricky to handle module resolution cleanly for complex multi-file in a raw blob.
-    // For now, we will focus on refreshing the iframe.
-    // To truly open in new tab, we'd need to construct the full HTML payload and open it.
-    // Let's keep it simple for MVP: just refresh.
-    refreshPreview();
+  const handleDeleteFile = (fileName: string) => {
+    if (fileName === 'App.tsx') return;
+    
+    setFiles(prev => prev.filter(f => f.name !== fileName));
+    
+    // If we deleted the active file, switch to App.tsx
+    if (activeFile === fileName) {
+      setActiveFile('App.tsx');
+    }
   };
 
   return (
@@ -164,6 +167,7 @@ export default function App() {
           files={files} 
           activeFile={activeFile} 
           onFileSelect={setActiveFile} 
+          onFileDelete={handleDeleteFile}
         />
       </div>
 
