@@ -10,17 +10,20 @@ RULES:
     *   **Entry Point:** There MUST be an \`App.tsx\` file which exports the main component as default: \`export default function App() { ... }\`.
     *   **Imports:** You can import other generated files using relative paths, e.g., \`import Header from './components/Header';\`.
 
-2.  **Styling:** 
-    *   Use Tailwind CSS for ALL styling. 
-    *   Make it look modern, clean, and professional (like Linear, Vercel, or Lovable designs). 
+2.  **Styling & Libraries:** 
+    *   Use **Tailwind CSS** for ALL styling. 
     *   Use \`min-h-screen\` in \`App.tsx\` to ensure full height.
+    *   **Available Libraries:** You MAY import and use the following libraries without installation:
+        *   \`lucide-react\` (Icons)
+        *   \`clsx\` and \`tailwind-merge\` (Utility for classes: \`import { clsx } from 'clsx'; import { twMerge } from 'tailwind-merge';\`)
+        *   \`@headlessui/react\` (Unstyled, accessible UI components like Menu, Listbox, Switch, etc.)
+    *   **Do NOT** use other external libraries (no Framer Motion, no Radix UI primitives unless you implement them).
 
 3.  **Icons:** 
-    *   Do NOT use external icon libraries that require npm installation. 
-    *   Use standard SVG elements inline.
+    *   Use \`lucide-react\` for icons. e.g., \`import { Home } from 'lucide-react';\`.
 
 4.  **No External Dependencies:** 
-    *   Do not use \`import\` for external libraries other than \`react\`, \`react-dom\`, and standard hooks.
+    *   Do not use \`import\` for external libraries other than the ones listed above.
     *   Images: Use \`https://picsum.photos/width/height\` for placeholders.
 
 5.  **Response Format:**
@@ -68,17 +71,23 @@ const getClient = () => {
 
 export const generateCodeFromPrompt = async (
   prompt: string,
-  history: { role: string; parts: { text: string }[] }[] = []
+  history: { role: string; parts: { text: string }[] }[] = [],
+  files: File[] = []
 ): Promise<GeneratedCode> => {
   const ai = getClient();
   const modelId = 'gemini-3-pro-preview';
+
+  // Construct context from current files
+  const fileContext = files.length > 0
+    ? `\n\n--- CURRENT PROJECT STATE ---\nThe following files exist in the project. Use this context to understand the current codebase. ONLY return files that need to be modified or created.\n\n${files.map(f => `<file_context name="${f.name}">\n${f.content}\n</file_context>`).join('\n\n')}\n--- END OF PROJECT STATE ---\n`
+    : '';
 
   try {
     const response = await ai.models.generateContent({
       model: modelId,
       contents: [
         ...history, 
-        { role: 'user', parts: [{ text: prompt }] }
+        { role: 'user', parts: [{ text: prompt + fileContext }] }
       ],
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,

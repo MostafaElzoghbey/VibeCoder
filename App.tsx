@@ -86,7 +86,8 @@ export default function App() {
         parts: [{ text: m.content }]
       }));
 
-      const { files: newFiles, filesToDelete, explanation } = await generateCodeFromPrompt(input, historyParts);
+      // Pass the current files state to the service
+      const { files: newFiles, filesToDelete, explanation } = await generateCodeFromPrompt(input, historyParts, files);
 
       setMessages(prev => [...prev, {
         role: 'model',
@@ -132,6 +133,7 @@ export default function App() {
         }
       }
     } catch (error) {
+      console.error(error);
       setMessages(prev => [...prev, {
         role: 'model',
         content: "Sorry, I encountered an error while generating the code. Please try again.",
@@ -141,7 +143,7 @@ export default function App() {
     } finally {
       setIsGenerating(false);
     }
-  }, [input, isGenerating, messages, activeFile]);
+  }, [input, isGenerating, messages, activeFile, files]);
 
   const refreshPreview = () => {
     setPreviewKey(k => k + 1);
