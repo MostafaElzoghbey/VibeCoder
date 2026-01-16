@@ -1,189 +1,118 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { ViewMode, Message, File, Plan } from './types';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { ViewMode, Message, File, Plan, Project, ExecutionState } from './types';
 import ChatInterface from './components/ChatInterface';
 import PreviewFrame from './components/PreviewFrame';
 import CodeViewer from './components/CodeViewer';
 import FileExplorer from './components/FileExplorer';
+import ProjectSidebar from './components/ProjectSidebar';
 import { generateCodeFromPrompt, generateProjectPlan } from './services/geminiService';
+import { 
+    saveProject, 
+    loadActiveProject, 
+    createNewProject, 
+    getProjects, 
+    deleteProject 
+} from './services/storageService';
 import { Eye, Code, Terminal, RefreshCw } from 'lucide-react';
 
-// Initial sample code
-const INITIAL_CODE = `
-import React, { useState } from 'react';
-import { Button } from './components/ui/Button';
-import { Layout } from 'lucide-react';
-
 export default function App() {
-  const [clicked, setClicked] = useState(false);
-  return (
-    <div className="min-h-screen bg-gray-50 text-gray-900 font-sans">
-      <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between sticky top-0 z-10">
-        <div className="flex items-center gap-2 text-indigo-600 font-bold text-xl">
-          <Layout className="w-6 h-6" />
-          <span>VibeCoder</span>
-        </div>
-        <nav className="flex gap-4 text-sm font-medium text-gray-500">
-          <a href="#" className="hover:text-gray-900 transition-colors">Docs</a>
-          <a href="#" className="hover:text-gray-900 transition-colors">Components</a>
-          <a href="#" className="hover:text-gray-900 transition-colors">Blog</a>
-        </nav>
-      </header>
+  // --- Initialization ---
+  // Load the initial project state synchronously to avoid flash
+  const initialProject = useRef(loadActiveProject()).current;
 
-      <main className="max-w-3xl mx-auto px-6 py-12">
-        <div className="text-center mb-12">
-          <h1 className="text-4xl font-extrabold tracking-tight text-gray-900 mb-4 sm:text-5xl">
-            Build React apps with <span className="text-indigo-600">Vibe</span>
-          </h1>
-          <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-            Describe what you want, and I'll build it using clean code, Tailwind CSS, and standard folder structures.
-          </p>
-        </div>
-
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-8 text-center">
-          <div className="mb-6">
-            <h2 className="text-lg font-semibold text-gray-900">Ready to start?</h2>
-            <p className="text-gray-500">Click the button to see interactivity.</p>
-          </div>
-          
-          <Button 
-            size="lg" 
-            onClick={() => setClicked(!clicked)}
-            className="animate-in zoom-in duration-300"
-          >
-            {clicked ? 'Vibe Check Passed ✅' : 'Start Building'}
-          </Button>
-        </div>
-        
-        <div className="mt-12 grid grid-cols-1 sm:grid-cols-3 gap-6">
-           <FeatureCard title="Modern Stack" desc="React 18 + Tailwind CSS + Lucide Icons" />
-           <FeatureCard title="Clean Code" desc="Modular components with proper folder structure" />
-           <FeatureCard title="AI Powered" desc="Powered by Gemini 2.0 Flash for instant results" />
-        </div>
-      </main>
-    </div>
-  );
-}
-
-function FeatureCard({ title, desc }: { title: string, desc: string }) {
-  return (
-    <div className="p-6 rounded-xl bg-white border border-gray-200 shadow-sm hover:shadow-md transition-all">
-      <h3 className="font-semibold text-gray-900 mb-2">{title}</h3>
-      <p className="text-sm text-gray-500 leading-relaxed">{desc}</p>
-    </div>
-  );
-}
-`;
-
-const UTILS_CODE = `
-import { clsx, type ClassValue } from "clsx";
-import { twMerge } from "tailwind-merge";
-
-export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
-`;
-
-const BUTTON_CODE = `
-import React from 'react';
-import { cn } from '../../lib/utils';
-
-interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'secondary' | 'outline' | 'ghost' | 'destructive';
-  size?: 'sm' | 'md' | 'lg' | 'icon';
-}
-
-export const Button = ({ 
-  children, 
-  className, 
-  variant = 'primary', 
-  size = 'md',
-  ...props 
-}: ButtonProps) => {
-  const variants = {
-    primary: "bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm",
-    secondary: "bg-gray-100 text-gray-900 hover:bg-gray-200",
-    outline: "bg-transparent border border-gray-200 text-gray-900 hover:bg-gray-50",
-    ghost: "bg-transparent text-gray-600 hover:bg-gray-100 hover:text-gray-900",
-    destructive: "bg-red-600 text-white hover:bg-red-700",
-  };
+  // --- State Management ---
+  // Core Project State
+  const [currentProjectId, setCurrentProjectId] = useState<string>(initialProject.id);
+  const [projectName, setProjectName] = useState<string>(initialProject.name);
+  const [files, setFiles] = useState<File[]>(initialProject.files);
+  const [messages, setMessages] = useState<Message[]>(initialProject.messages);
   
-  const sizes = {
-    sm: "h-8 px-3 text-xs",
-    md: "h-10 px-4 py-2 text-sm",
-    lg: "h-12 px-8 text-base",
-    icon: "h-10 w-10 p-2",
-  };
+  // Execution State (Planning/Coding)
+  const [executionState, setExecutionState] = useState<ExecutionState>(initialProject.executionState);
+  const [activePlanMessageId, setActivePlanMessageId] = useState<number | null>(initialProject.activePlanMessageId);
+  const [currentStepIndex, setCurrentStepIndex] = useState<number>(initialProject.currentStepIndex);
 
-  return (
-    <button 
-      className={cn(
-        "inline-flex items-center justify-center rounded-lg font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:pointer-events-none disabled:opacity-50",
-        variants[variant],
-        sizes[size],
-        className
-      )}
-      {...props}
-    >
-      {children}
-    </button>
-  );
-};
-`;
-
-const INITIAL_FILES: File[] = [
-  {
-    name: 'App.tsx',
-    language: 'typescript',
-    content: INITIAL_CODE.trim()
-  },
-  {
-    name: 'lib/utils.ts',
-    language: 'typescript',
-    content: UTILS_CODE.trim()
-  },
-  {
-    name: 'components/ui/Button.tsx',
-    language: 'typescript',
-    content: BUTTON_CODE.trim()
-  },
-  {
-    name: 'package.json',
-    language: 'json',
-    content: `{\n  "name": "vibe-coder-project",\n  "version": "1.0.0",\n  "dependencies": {\n    "react": "^18.3.1",\n    "react-dom": "^18.3.1",\n    "lucide-react": "^0.263.1",\n    "clsx": "^2.0.0",\n    "tailwind-merge": "^2.0.0"\n  }\n}`
-  },
-  {
-    name: 'readme.md',
-    language: 'markdown',
-    content: `# Vibe Coder Project\n\nGenerated with AI.`
-  }
-];
-
-export default function App() {
-  const [messages, setMessages] = useState<Message[]>([{
-    role: 'model',
-    content: "Hi! I'm VibeCoder. Describe an app or component you want me to build with React and Tailwind.",
-    timestamp: Date.now()
-  }]);
-  
-  const [files, setFiles] = useState<File[]>(INITIAL_FILES);
+  // UI State
   const [activeFile, setActiveFile] = useState<string>('App.tsx');
   const [input, setInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.PREVIEW);
   const [previewKey, setPreviewKey] = useState(0);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-  // Planning State
-  const [executionState, setExecutionState] = useState<'IDLE' | 'PLANNING' | 'WAITING_APPROVAL' | 'EXECUTING'>('IDLE');
-  const [activePlanMessageId, setActivePlanMessageId] = useState<number | null>(null);
-  const [currentStepIndex, setCurrentStepIndex] = useState<number>(-1);
-
+  // Derived State
   const activeFileContent = files.find(f => f.name === activeFile)?.content || '';
 
-  // --- 1. User Sends Prompt (Starts Planning) ---
+  // --- Auto-Save Logic ---
+  useEffect(() => {
+    if (!currentProjectId) return;
+
+    const projectToSave: Project = {
+        id: currentProjectId,
+        name: projectName,
+        createdAt: initialProject.createdAt, // This technically shouldn't change, but simplifies
+        lastModified: Date.now(),
+        files,
+        messages,
+        executionState,
+        activePlanMessageId,
+        currentStepIndex
+    };
+
+    saveProject(projectToSave);
+  }, [files, messages, executionState, activePlanMessageId, currentStepIndex, currentProjectId, projectName, initialProject.createdAt]);
+
+  // --- Project Management Handlers ---
+  const handleCreateProject = () => {
+    const newProject = createNewProject();
+    loadProjectIntoState(newProject);
+    setIsSidebarOpen(false); // Close sidebar after creating
+  };
+
+  const handleSwitchProject = (id: string) => {
+    const projects = getProjects();
+    const target = projects.find(p => p.id === id);
+    if (target) {
+        loadProjectIntoState(target);
+    }
+  };
+
+  const handleDeleteProject = (id: string) => {
+    const remaining = deleteProject(id);
+    if (currentProjectId === id) {
+        // If we deleted the active project, switch to another or create new
+        if (remaining.length > 0) {
+            loadProjectIntoState(remaining[0]);
+        } else {
+            handleCreateProject();
+        }
+    }
+  };
+
+  const loadProjectIntoState = (project: Project) => {
+    setCurrentProjectId(project.id);
+    setProjectName(project.name);
+    setFiles(project.files);
+    setMessages(project.messages);
+    setExecutionState(project.executionState);
+    setActivePlanMessageId(project.activePlanMessageId);
+    setCurrentStepIndex(project.currentStepIndex);
+    setActiveFile('App.tsx');
+    setPreviewKey(k => k + 1);
+  };
+
+  // --- AI Logic (Planning & Coding) ---
   const handleSend = useCallback(async () => {
     if (!input.trim() || isGenerating) return;
 
-    // Reset previous plan states if we are starting new
+    // Smart naming: If it's the first user prompt and project name is generic, rename it
+    if (messages.filter(m => m.role === 'user').length === 0) {
+        // Simple heuristic: Use first 4 words of prompt
+        const smartName = input.split(' ').slice(0, 4).join(' ');
+        setProjectName(smartName.length > 30 ? smartName.substring(0, 30) + '...' : smartName);
+    }
+
+    // Reset previous plan states if we are starting new workflow
     if (executionState === 'IDLE' || executionState === 'WAITING_APPROVAL') {
         setExecutionState('PLANNING');
         setActivePlanMessageId(null);
@@ -201,9 +130,6 @@ export default function App() {
     setIsGenerating(true);
 
     try {
-      // If we are already executing, this is a modification request or interrupt.
-      // For MVP, let's treat every new prompt as a "New Plan Request" if we are IDLE.
-      
       const plan = await generateProjectPlan(input, files);
       
       const planMessage: Message = {
@@ -228,28 +154,31 @@ export default function App() {
     } finally {
       setIsGenerating(false);
     }
-  }, [input, isGenerating, files, executionState]);
+  }, [input, isGenerating, files, executionState, messages]);
 
-
-  // --- 2. User Approves Plan ---
   const handleApprovePlan = (messageIndex: number) => {
       setActivePlanMessageId(messageIndex);
       setExecutionState('EXECUTING');
-      setCurrentStepIndex(0); // This triggers the useEffect loop
+      setCurrentStepIndex(0); 
   };
 
-  // --- 3. Execution Loop ---
+  // --- Execution Loop ---
+  // Using a ref to access latest state inside async operation without stale closures
+  const stateRef = useRef({ files, messages });
+  useEffect(() => { stateRef.current = { files, messages }; }, [files, messages]);
+
   useEffect(() => {
     const executeStep = async () => {
         if (executionState !== 'EXECUTING' || activePlanMessageId === null || currentStepIndex === -1) return;
         
-        // Find the plan in messages
-        const planMessage = messages[activePlanMessageId];
+        // Use functional state updates to avoid dependency loops, but read from ref for latest "snapshot" if needed
+        const currentMessages = stateRef.current.messages;
+        const planMessage = currentMessages[activePlanMessageId];
+        
         if (!planMessage || !planMessage.plan) return;
 
         const steps = planMessage.plan.steps;
         if (currentStepIndex >= steps.length) {
-            // Finished
             setExecutionState('IDLE');
             setMessages(prev => [...prev, {
                 role: 'model',
@@ -265,7 +194,11 @@ export default function App() {
         setMessages(prev => {
             const newMsgs = [...prev];
             if (newMsgs[activePlanMessageId]?.plan) {
-                newMsgs[activePlanMessageId].plan!.steps[currentStepIndex].status = 'running';
+                // Create a shallow copy of the plan and steps to trigger re-render
+                const plan = newMsgs[activePlanMessageId].plan!;
+                const newSteps = [...plan.steps];
+                newSteps[currentStepIndex] = { ...newSteps[currentStepIndex], status: 'running' };
+                newMsgs[activePlanMessageId] = { ...newMsgs[activePlanMessageId], plan: { ...plan, steps: newSteps } };
             }
             return newMsgs;
         });
@@ -273,16 +206,16 @@ export default function App() {
         setIsGenerating(true);
 
         try {
-            // Generate Code for this Step
-            // We pass the conversation history + specific step instruction
-            const historyParts = messages.filter(m => !m.plan).map(m => ({
+            // Generate Code
+            const historyParts = currentMessages.filter(m => !m.plan).map(m => ({
                 role: m.role,
                 parts: [{ text: m.content }]
             }));
 
             const stepPrompt = `Execute Step ${currentStep.id}: ${currentStep.title}. \nInstructions: ${currentStep.description}`;
             
-            const { files: newFiles, filesToDelete, explanation } = await generateCodeFromPrompt(stepPrompt, historyParts, files);
+            // Pass current files
+            const { files: newFiles, filesToDelete, explanation } = await generateCodeFromPrompt(stepPrompt, historyParts, stateRef.current.files);
 
             // Update Files
             setFiles(prev => {
@@ -305,10 +238,12 @@ export default function App() {
             setMessages(prev => {
                 const newMsgs = [...prev];
                 if (newMsgs[activePlanMessageId]?.plan) {
-                    newMsgs[activePlanMessageId].plan!.steps[currentStepIndex].status = 'completed';
+                    const plan = newMsgs[activePlanMessageId].plan!;
+                    const newSteps = [...plan.steps];
+                    newSteps[currentStepIndex] = { ...newSteps[currentStepIndex], status: 'completed' };
+                    newMsgs[activePlanMessageId] = { ...newMsgs[activePlanMessageId], plan: { ...plan, steps: newSteps } };
                 }
-                // Add the explanation as a small separate message or log (Optional, but keeps user informed)
-                // For a cleaner UI, we might NOT add a message for every step, but let's add it for transparency
+                // Add completion message
                 newMsgs.push({
                     role: 'model',
                     content: `Completed Step ${currentStep.id}: ${explanation}`,
@@ -317,24 +252,32 @@ export default function App() {
                 return newMsgs;
             });
             
-            // Refresh Preview
             setPreviewKey(k => k + 1);
-            if (newFiles.length > 0) setActiveFile(newFiles[0].name);
+            if (newFiles.length > 0) {
+                 // If App.tsx was modified, focus it, otherwise focus the first new file
+                 if (newFiles.some(f => f.name === 'App.tsx')) {
+                     setActiveFile('App.tsx');
+                 } else {
+                     setActiveFile(newFiles[0].name);
+                 }
+            }
 
             // Move to next step
             setCurrentStepIndex(prev => prev + 1);
 
         } catch (err) {
             console.error("Step Execution Error", err);
-            // Mark failed
             setMessages(prev => {
                 const newMsgs = [...prev];
-                if (newMsgs[activePlanMessageId]?.plan) {
-                    newMsgs[activePlanMessageId].plan!.steps[currentStepIndex].status = 'failed';
+                 if (newMsgs[activePlanMessageId]?.plan) {
+                    const plan = newMsgs[activePlanMessageId].plan!;
+                    const newSteps = [...plan.steps];
+                    newSteps[currentStepIndex] = { ...newSteps[currentStepIndex], status: 'failed' };
+                    newMsgs[activePlanMessageId] = { ...newMsgs[activePlanMessageId], plan: { ...plan, steps: newSteps } };
                 }
                 newMsgs.push({
                     role: 'model',
-                    content: `Error executing step ${currentStep.id}. execution paused.`,
+                    content: `Error executing step ${currentStep.id}. Execution paused.`,
                     timestamp: Date.now(),
                     isError: true
                 });
@@ -348,29 +291,40 @@ export default function App() {
 
     executeStep();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentStepIndex, executionState, activePlanMessageId]); 
-  // Dependency on `files` is omitted to prevent loop, but `generateCodeFromPrompt` uses the ref/current state ideally. 
-  // In this functional update pattern, we pass `files` to `generateCodeFromPrompt`. 
-  // To avoid stale closure, we might need a ref for files or rely on the fact that `executeStep` runs only when index changes.
-  // Actually, `files` IS a dependency. To fix stale closure without infinite loop, we can use a ref for files.
-  
-  const filesRef = React.useRef(files);
-  useEffect(() => { filesRef.current = files; }, [files]);
+  }, [currentStepIndex, executionState, activePlanMessageId]);
 
-  // Fix: The useEffect above needs to call the service with `filesRef.current` to ensure it has latest files 
-  // without re-triggering the effect when files change (which happens inside the effect).
-  // Let's rewrite the dependency logic slightly.
+  // --- Render Handlers ---
+  const handleDeleteFile = (fileName: string) => {
+    if (fileName === 'App.tsx') return;
+    setFiles(prev => prev.filter(f => f.name !== fileName));
+    if (activeFile === fileName) setActiveFile('App.tsx');
+  };
+
+  const refreshPreview = () => setPreviewKey(k => k + 1);
 
   return (
     <div className="flex h-screen w-full bg-gray-950 text-white overflow-hidden font-sans">
       
-      {/* File Explorer */}
+      <ProjectSidebar 
+        isOpen={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
+        projects={getProjects()}
+        activeProjectId={currentProjectId}
+        onSelectProject={handleSwitchProject}
+        onCreateProject={handleCreateProject}
+        onDeleteProject={handleDeleteProject}
+      />
+
+      {/* File Explorer (Desktop) */}
       <div className="w-64 flex-shrink-0 flex flex-col h-full border-r border-gray-800 hidden md:flex">
         <FileExplorer 
           files={files} 
           activeFile={activeFile} 
           onFileSelect={setActiveFile} 
           onFileDelete={handleDeleteFile}
+          projectName={projectName}
+          onShowProjects={() => setIsSidebarOpen(true)}
+          onCreateProject={handleCreateProject}
         />
       </div>
 
@@ -391,8 +345,8 @@ export default function App() {
         
         {/* Toolbar */}
         <div className="h-14 border-b border-gray-800 flex items-center justify-between px-4 bg-gray-900">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-gray-400 flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-gray-400 flex items-center gap-2">
               <Terminal className="w-4 h-4" />
               {activeFile}
             </span>
@@ -452,14 +406,4 @@ export default function App() {
       </div>
     </div>
   );
-
-  function refreshPreview() {
-    setPreviewKey(k => k + 1);
-  }
-
-  function handleDeleteFile(fileName: string) {
-    if (fileName === 'App.tsx') return;
-    setFiles(prev => prev.filter(f => f.name !== fileName));
-    if (activeFile === fileName) setActiveFile('App.tsx');
-  }
 }

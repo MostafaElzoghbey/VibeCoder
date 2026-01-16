@@ -34,3 +34,18 @@ export enum ViewMode {
   CODE = 'CODE',
   PREVIEW = 'PREVIEW',
 }
+
+export type ExecutionState = 'IDLE' | 'PLANNING' | 'WAITING_APPROVAL' | 'EXECUTING';
+
+export interface Project {
+  id: string;
+  name: string;
+  createdAt: number;
+  lastModified: number;
+  files: File[];
+  messages: Message[];
+  // Persist execution state to resume workflows
+  executionState: ExecutionState;
+  activePlanMessageId: number | null;
+  currentStepIndex: number;
+}

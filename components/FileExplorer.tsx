@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { 
   FileCode, FileJson, FileType, Folder, FolderOpen, 
-  ChevronRight, ChevronDown, Trash2, Plus 
+  ChevronRight, ChevronDown, Trash2, Plus, LayoutGrid, History
 } from 'lucide-react';
 import { File } from '../types';
 
@@ -10,6 +10,9 @@ interface FileExplorerProps {
   activeFile: string;
   onFileSelect: (fileName: string) => void;
   onFileDelete: (fileName: string) => void;
+  projectName: string;
+  onShowProjects: () => void;
+  onCreateProject: () => void;
 }
 
 interface FileNode {
@@ -23,7 +26,10 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
   files, 
   activeFile, 
   onFileSelect,
-  onFileDelete
+  onFileDelete,
+  projectName,
+  onShowProjects,
+  onCreateProject
 }) => {
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['components', 'components/ui']));
 
@@ -88,7 +94,6 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
        }
     } else {
        if (window.confirm(`Delete folder ${node.name} and all its contents?`)) {
-           // Find all files starting with this path
            const filesToDelete = files.filter(f => f.name.startsWith(node.path + '/'));
            filesToDelete.forEach(f => onFileDelete(f.name));
        }
@@ -147,21 +152,44 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
 
   return (
     <div className="flex flex-col h-full bg-gray-950 border-r border-gray-800 text-gray-400 select-none">
-      <div className="p-4 border-b border-gray-800 flex items-center justify-between">
-        <div className="flex items-center gap-2 text-gray-200 font-semibold text-sm">
-          <FolderOpen className="w-4 h-4" />
-          <span>Project</span>
+      {/* Project Header */}
+      <div className="p-4 border-b border-gray-800">
+        <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-bold text-indigo-400 uppercase tracking-wider flex items-center gap-1">
+                <LayoutGrid className="w-3 h-3" />
+                VibeCoder
+            </span>
+            <div className="flex gap-1">
+                 <button 
+                    onClick={onShowProjects}
+                    className="p-1.5 hover:bg-gray-800 text-gray-400 hover:text-white rounded transition-colors"
+                    title="Project History"
+                 >
+                    <History className="w-4 h-4" />
+                 </button>
+                 <button 
+                    onClick={onCreateProject}
+                    className="p-1.5 hover:bg-gray-800 text-gray-400 hover:text-white rounded transition-colors"
+                    title="New Project"
+                 >
+                    <Plus className="w-4 h-4" />
+                 </button>
+            </div>
         </div>
-        {/* Placeholder for creating new files/folders manually */}
-        <button 
-          className="p-1 hover:bg-gray-800 rounded transition-colors opacity-50 cursor-not-allowed"
-          title="New File (Coming Soon)"
+        <div 
+            onClick={onShowProjects}
+            className="text-sm font-semibold text-white truncate hover:text-indigo-300 cursor-pointer transition-colors flex items-center gap-2"
         >
-            <Plus className="w-4 h-4" />
-        </button>
+            <span>{projectName}</span>
+            <ChevronRight className="w-3 h-3 text-gray-600" />
+        </div>
       </div>
       
+      {/* File List */}
       <div className="flex-1 overflow-y-auto py-2 custom-scrollbar">
+        <div className="px-4 py-2 text-xs font-semibold text-gray-600 uppercase tracking-wider">
+            Files
+        </div>
         {fileTree.map(node => renderNode(node, 0))}
       </div>
     </div>
