@@ -82,6 +82,43 @@ function getAI() {
   return aiClient;
 }
 
+function extractApiError(error: unknown, fallback: string): { status: number; message: string } {
+  const raw = error instanceof Error ? error.message : String(error || fallback);
+
+  let code = 500;
+  let parsedMsg = raw;
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed?.error) {
+      code = Number(parsed.error.code) || 500;
+      parsedMsg = parsed.error.message || raw;
+    }
+  } catch {
+    if (/429|RESOURCE_EXHAUSTED/i.test(raw)) code = 429;
+    else if (/403|PERMISSION_DENIED/i.test(raw)) code = 403;
+    else if (/400|API_KEY_INVALID/i.test(raw)) code = 400;
+  }
+
+  if (code === 429 || /RESOURCE_EXHAUSTED/i.test(parsedMsg)) {
+    return {
+      status: 429,
+      message:
+        "Gemini API quota exceeded (429 RESOURCE_EXHAUSTED). If you are on the free tier, daily request limits may be reached—upgrade or select a billing-enabled API key in Settings > Secrets.",
+    };
+  }
+
+  if (code === 400 || code === 403 || /API_KEY_INVALID|PERMISSION_DENIED/i.test(parsedMsg)) {
+    return {
+      status: code,
+      message:
+        "Gemini API key is missing, invalid, or lacks permission. Please check your API key in Settings > Secrets.",
+    };
+  }
+
+  return { status: code >= 400 && code < 600 ? code : 500, message: parsedMsg || fallback };
+}
+
 async function withRetry<T>(fn: () => Promise<T>, maxRetries = 2): Promise<T> {
   let lastError: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -90,7 +127,8 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetries = 2): Promise<T> {
     } catch (error) {
       lastError = error;
       const msg = error instanceof Error ? error.message : String(error);
-      const isTransient = /429|500|503|UNAVAILABLE|RESOURCE_EXHAUSTED|DEADLINE_EXCEEDED/i.test(msg);
+      const isDailyQuota = /PerDay|daily/i.test(msg);
+      const isTransient = !isDailyQuota && /429|500|503|UNAVAILABLE|RESOURCE_EXHAUSTED|DEADLINE_EXCEEDED/i.test(msg);
       if (!isTransient || attempt === maxRetries) {
         throw error;
       }
@@ -206,8 +244,8 @@ async function startServer() {
       return res.json(parsed);
     } catch (error) {
       console.error("Plan Generation Error:", error);
-      const message = error instanceof Error ? error.message : "Failed to generate project plan.";
-      return res.status(500).json({ error: message });
+      const { status, message } = extractApiError(error, "Failed to generate project plan.");
+      return res.status(status).json({ error: message });
     }
   });
 
@@ -294,8 +332,8 @@ async function startServer() {
       });
     } catch (error) {
       console.error("Code Generation Error:", error);
-      const message = error instanceof Error ? error.message : "Failed to generate code.";
-      return res.status(500).json({ error: message });
+      const { status, message } = extractApiError(error, "Failed to generate code.");
+      return res.status(status).json({ error: message });
     }
   });
 

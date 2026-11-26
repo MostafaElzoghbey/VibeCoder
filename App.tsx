@@ -299,9 +299,10 @@ export default function App() {
 
     } catch (error) {
       console.error(error);
+      const errorDetail = error instanceof Error ? error.message : "Please try again.";
       setMessages(prev => [...prev, {
         role: 'model',
-        content: "Sorry, I encountered an error while planning. Please try again.",
+        content: `Planning error: ${errorDetail}`,
         timestamp: Date.now(),
         isError: true
       }]);
