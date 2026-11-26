@@ -13,7 +13,7 @@ import {
     getProjects, 
     deleteProject 
 } from './services/storageService';
-import { Eye, Code, Terminal, RefreshCw } from 'lucide-react';
+import { Eye, Code, Terminal, RefreshCw, Menu } from 'lucide-react';
 
 export default function App() {
   // --- Initialization ---
@@ -101,6 +101,161 @@ export default function App() {
     setPreviewKey(k => k + 1);
   };
 
+  // --- File/Folder Handlers ---
+  const handleCreateFolder = (parentPath: string, folderName: string) => {
+    if (!folderName || folderName.trim() === "") return;
+    if (folderName.includes('/')) {
+        alert("Folder names cannot contain '/'.");
+        return;
+    }
+    
+    // Create a .keep file to persist the folder
+    const fullPath = parentPath ? `${parentPath}/${folderName}/.keep` : `${folderName}/.keep`;
+    
+    if (files.some(f => f.name === fullPath)) return;
+    
+    setFiles(prev => [...prev, {
+        name: fullPath,
+        language: 'plaintext',
+        content: ''
+    }]);
+  };
+
+  const handleCreateFile = (parentPath: string, fileName: string) => {
+     if (!fileName || fileName.trim() === "") return;
+     if (fileName.includes('/')) {
+        alert("File names cannot contain '/'. Use folder creation instead.");
+        return;
+     }
+     
+     const fullPath = parentPath ? `${parentPath}/${fileName}` : fileName;
+     
+     if (files.some(f => f.name === fullPath)) {
+         alert("File already exists");
+         return;
+     }
+     
+     setFiles(prev => [...prev, {
+         name: fullPath,
+         language: 'typescript', // Default to typescript
+         content: ''
+     }]);
+     setActiveFile(fullPath);
+  };
+
+  const handleMoveFile = (sourcePath: string, targetFolder: string) => {
+    // Basic validations
+    if (sourcePath === targetFolder) return;
+    
+    // Cannot move a folder into its own subdirectory
+    if (targetFolder.startsWith(sourcePath + '/')) {
+        return;
+    }
+
+    setFiles(prevFiles => {
+        const newFiles = [...prevFiles];
+        const isFolder = !prevFiles.some(f => f.name === sourcePath); // Simple check if exactly matches a file
+
+        if (!isFolder) {
+            // Moving a specific file
+            const file = newFiles.find(f => f.name === sourcePath);
+            if (!file) return prevFiles; // Should not happen
+
+            const fileName = sourcePath.split('/').pop();
+            const newPath = targetFolder ? `${targetFolder}/${fileName}` : fileName!;
+            
+            // Check if exists
+            if (newFiles.some(f => f.name === newPath)) {
+                 // optionally alert or overwrite. For now, abort.
+                 return prevFiles;
+            }
+            
+            file.name = newPath;
+            
+            // Update active file if we just moved it
+            if (activeFile === sourcePath) {
+                setActiveFile(newPath);
+            }
+        } else {
+            // Moving a folder (renaming prefix for all contained files)
+            const folderName = sourcePath.split('/').pop();
+            
+            // Find all files that are children of sourcePath
+            const affectedFiles = newFiles.filter(f => f.name.startsWith(sourcePath + '/'));
+            if (affectedFiles.length === 0) return prevFiles;
+
+            affectedFiles.forEach(f => {
+                const suffix = f.name.substring(sourcePath.length);
+                const newPath = targetFolder 
+                    ? `${targetFolder}/${folderName}${suffix}` 
+                    : `${folderName}${suffix}`;
+                
+                // Update active file if it was inside the moved folder
+                if (activeFile === f.name) {
+                    setActiveFile(newPath);
+                }
+                
+                f.name = newPath;
+            });
+        }
+        
+        return newFiles;
+    });
+  };
+
+  const handleRenameNode = (oldPath: string, newName: string) => {
+      // 1. Get the parent path
+      const pathParts = oldPath.split('/');
+      const parentPath = pathParts.slice(0, pathParts.length - 1).join('/');
+      const newPath = parentPath ? `${parentPath}/${newName}` : newName;
+      
+      if (oldPath === newPath) return;
+
+      // Check for collision (basic check)
+      if (files.some(f => f.name === newPath || f.name.startsWith(newPath + '/'))) {
+          alert("A file or folder with this name already exists");
+          return;
+      }
+
+      setFiles(prev => {
+          const next = prev.map(f => {
+              if (f.name === oldPath) {
+                  return { ...f, name: newPath };
+              }
+              if (f.name.startsWith(oldPath + '/')) {
+                  const suffix = f.name.substring(oldPath.length);
+                  return { ...f, name: newPath + suffix };
+              }
+              return f;
+          });
+          return next;
+      });
+
+      // Update active file if needed
+      if (activeFile === oldPath) {
+          setActiveFile(newPath);
+      } else if (activeFile.startsWith(oldPath + '/')) {
+          const suffix = activeFile.substring(oldPath.length);
+          setActiveFile(newPath + suffix);
+      }
+  };
+
+  const handleDeleteNode = (path: string) => {
+      if (path === 'App.tsx') {
+          alert("Cannot delete root entry file.");
+          return;
+      }
+      
+      // Delete the file OR any files that start with path + '/' (folder contents)
+      setFiles(prev => prev.filter(f => 
+          f.name !== path && !f.name.startsWith(path + '/')
+      ));
+      
+      if (activeFile === path || activeFile.startsWith(path + '/')) {
+          setActiveFile('App.tsx');
+      }
+  };
+
   // --- AI Logic (Planning & Coding) ---
   const handleSend = useCallback(async () => {
     if (!input.trim() || isGenerating) return;
@@ -162,14 +317,25 @@ export default function App() {
       setCurrentStepIndex(0); 
   };
 
+  const handleRetryStep = (messageIndex: number, stepIndex: number) => {
+      if (isGenerating) return;
+      setActivePlanMessageId(messageIndex);
+      setExecutionState('EXECUTING');
+      setCurrentStepIndex(stepIndex);
+  };
+
   // --- Execution Loop ---
   // Using a ref to access latest state inside async operation without stale closures
   const stateRef = useRef({ files, messages });
   useEffect(() => { stateRef.current = { files, messages }; }, [files, messages]);
+  const inFlightStepRef = useRef<string | null>(null);
 
   useEffect(() => {
     const executeStep = async () => {
         if (executionState !== 'EXECUTING' || activePlanMessageId === null || currentStepIndex === -1) return;
+
+        const stepRunKey = `${activePlanMessageId}:${currentStepIndex}`;
+        if (inFlightStepRef.current === stepRunKey) return;
         
         // Use functional state updates to avoid dependency loops, but read from ref for latest "snapshot" if needed
         const currentMessages = stateRef.current.messages;
@@ -189,6 +355,7 @@ export default function App() {
         }
 
         const currentStep = steps[currentStepIndex];
+        inFlightStepRef.current = stepRunKey;
         
         // Update Step Status to RUNNING
         setMessages(prev => {
@@ -207,10 +374,12 @@ export default function App() {
 
         try {
             // Generate Code
-            const historyParts = currentMessages.filter(m => !m.plan).map(m => ({
-                role: m.role,
-                parts: [{ text: m.content }]
-            }));
+            const historyParts = currentMessages
+                .filter(m => !m.plan && !m.isError && m.content.trim().length > 0)
+                .map(m => ({
+                    role: m.role,
+                    parts: [{ text: m.content }]
+                }));
 
             const stepPrompt = `Execute Step ${currentStep.id}: ${currentStep.title}. \nInstructions: ${currentStep.description}`;
             
@@ -246,7 +415,7 @@ export default function App() {
                 // Add completion message
                 newMsgs.push({
                     role: 'model',
-                    content: `Completed Step ${currentStep.id}: ${explanation}`,
+                    content: `Completed Step ${currentStep.id}: ${explanation || currentStep.title}`,
                     timestamp: Date.now()
                 });
                 return newMsgs;
@@ -267,6 +436,7 @@ export default function App() {
 
         } catch (err) {
             console.error("Step Execution Error", err);
+            const errorDetail = err instanceof Error ? err.message : "Unknown error";
             setMessages(prev => {
                 const newMsgs = [...prev];
                  if (newMsgs[activePlanMessageId]?.plan) {
@@ -277,7 +447,7 @@ export default function App() {
                 }
                 newMsgs.push({
                     role: 'model',
-                    content: `Error executing step ${currentStep.id}. Execution paused.`,
+                    content: `Error executing step ${currentStep.id}: ${errorDetail}. Execution paused.`,
                     timestamp: Date.now(),
                     isError: true
                 });
@@ -285,6 +455,7 @@ export default function App() {
             });
             setExecutionState('IDLE');
         } finally {
+            inFlightStepRef.current = null;
             setIsGenerating(false);
         }
     };
@@ -294,12 +465,6 @@ export default function App() {
   }, [currentStepIndex, executionState, activePlanMessageId]);
 
   // --- Render Handlers ---
-  const handleDeleteFile = (fileName: string) => {
-    if (fileName === 'App.tsx') return;
-    setFiles(prev => prev.filter(f => f.name !== fileName));
-    if (activeFile === fileName) setActiveFile('App.tsx');
-  };
-
   const refreshPreview = () => setPreviewKey(k => k + 1);
 
   return (
@@ -321,10 +486,14 @@ export default function App() {
           files={files} 
           activeFile={activeFile} 
           onFileSelect={setActiveFile} 
-          onFileDelete={handleDeleteFile}
+          onFileDelete={handleDeleteNode}
           projectName={projectName}
           onShowProjects={() => setIsSidebarOpen(true)}
           onCreateProject={handleCreateProject}
+          onCreateFolder={handleCreateFolder}
+          onCreateFile={handleCreateFile}
+          onFileMove={handleMoveFile}
+          onRenameNode={handleRenameNode}
         />
       </div>
 
@@ -337,6 +506,7 @@ export default function App() {
           onInputChange={setInput}
           onSend={handleSend}
           onApprovePlan={handleApprovePlan}
+          onRetryStep={handleRetryStep}
         />
       </div>
 
@@ -346,6 +516,16 @@ export default function App() {
         {/* Toolbar */}
         <div className="h-14 border-b border-gray-800 flex items-center justify-between px-4 bg-gray-900">
           <div className="flex items-center gap-3">
+             <button 
+                onClick={() => setIsSidebarOpen(true)}
+                className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded-md transition-colors"
+             >
+                <Menu className="w-5 h-5" />
+             </button>
+            <span className="text-sm font-semibold text-white truncate max-w-[200px]">
+                {projectName}
+            </span>
+            <div className="h-4 w-[1px] bg-gray-700 mx-1" />
             <span className="text-sm text-gray-400 flex items-center gap-2">
               <Terminal className="w-4 h-4" />
               {activeFile}
@@ -398,7 +578,7 @@ export default function App() {
              </div>
           ) : (
             <div className="w-full h-full">
-              <CodeViewer code={activeFileContent} />
+              <CodeViewer code={activeFileContent} fileName={activeFile} />
             </div>
           )}
         </div>

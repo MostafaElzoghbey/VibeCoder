@@ -9,6 +9,7 @@ interface ChatInterfaceProps {
   onInputChange: (val: string) => void;
   onSend: () => void;
   onApprovePlan: (planIndex: number) => void;
+  onRetryStep?: (planIndex: number, stepIndex: number) => void;
 }
 
 const ChatInterface: React.FC<ChatInterfaceProps> = ({
@@ -17,7 +18,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   isGenerating,
   onInputChange,
   onSend,
-  onApprovePlan
+  onApprovePlan,
+  onRetryStep
 }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -112,10 +114,25 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                             <div className="p-3 border-t border-gray-700 bg-gray-800/50">
                                 <button 
                                     onClick={() => onApprovePlan(idx)}
-                                    className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white py-2 rounded-md text-sm font-medium transition-colors"
+                                    disabled={isGenerating}
+                                    className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white py-2 rounded-md text-sm font-medium transition-colors"
                                 >
                                     <Play className="w-3.5 h-3.5 fill-current" />
                                     Start Building
+                                </button>
+                            </div>
+                        )}
+                        {onRetryStep && !isGenerating && msg.plan.steps.some(s => s.status === 'failed') && (
+                            <div className="p-3 border-t border-gray-700 bg-gray-800/50">
+                                <button 
+                                    onClick={() => {
+                                        const failedIdx = msg.plan!.steps.findIndex(s => s.status === 'failed');
+                                        if (failedIdx !== -1) onRetryStep(idx, failedIdx);
+                                    }}
+                                    className="w-full flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-500 text-white py-2 rounded-md text-sm font-medium transition-colors"
+                                >
+                                    <Play className="w-3.5 h-3.5 fill-current" />
+                                    Retry Failed Step
                                 </button>
                             </div>
                         )}

@@ -3,9 +3,10 @@ import { Copy, Check } from 'lucide-react';
 
 interface CodeViewerProps {
   code: string;
+  fileName?: string;
 }
 
-const CodeViewer: React.FC<CodeViewerProps> = ({ code }) => {
+const CodeViewer: React.FC<CodeViewerProps> = ({ code, fileName = 'App.tsx' }) => {
   const [copied, setCopied] = React.useState(false);
 
   const handleCopy = () => {
@@ -17,7 +18,7 @@ const CodeViewer: React.FC<CodeViewerProps> = ({ code }) => {
   return (
     <div className="flex flex-col h-full bg-[#1e1e1e] text-gray-300">
       <div className="flex items-center justify-between px-4 py-2 bg-[#252526] border-b border-black">
-        <span className="text-xs uppercase tracking-wider font-mono text-gray-500">App.tsx</span>
+        <span className="text-xs uppercase tracking-wider font-mono text-gray-500">{fileName}</span>
         <button
           onClick={handleCopy}
           className="p-1 hover:bg-gray-700 rounded transition-colors"

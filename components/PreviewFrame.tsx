@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useMemo } from 'react';
 import { File } from '../types';
 
 interface PreviewFrameProps {
@@ -6,35 +6,39 @@ interface PreviewFrameProps {
 }
 
 const PreviewFrame: React.FC<PreviewFrameProps> = ({ files }) => {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const srcDoc = useMemo(() => {
+    const codeFiles = files
+      .filter(f =>
+        f.name.endsWith('.tsx') ||
+        f.name.endsWith('.ts') ||
+        f.name.endsWith('.js') ||
+        f.name.endsWith('.jsx')
+      )
+      .map(f => ({
+        ...f,
+        name: f.name.replace(/^[./]+/, '')
+      }));
 
-  useEffect(() => {
-    if (!iframeRef.current) return;
+    const cssContent = files
+      .filter(f => f.name.endsWith('.css'))
+      .map(f => f.content)
+      .join('\n');
 
-    // Filter for valid code files
-    const codeFiles = files.filter(f => 
-      f.name.endsWith('.tsx') || 
-      f.name.endsWith('.ts') || 
-      f.name.endsWith('.js') || 
-      f.name.endsWith('.jsx')
-    );
-
-    const html = `
+    return `
       <!DOCTYPE html>
       <html lang="en">
       <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <script>
-            // 1. Shim process/error handling immediately
             window.process = { env: { NODE_ENV: 'development' } };
-            
+
             window.onerror = function(msg, url, line, col, error) {
                 const root = document.getElementById('root');
                 if (root) {
                     root.innerHTML = '<div class="error-container">' +
-                        '<h3 style="margin-top:0">Runtime Error</h3>' + 
-                        '<pre style="white-space: pre-wrap;">' + (error ? error.message : msg) + '</pre>' + 
+                        '<h3 style="margin-top:0">Runtime Error</h3>' +
+                        '<pre style="white-space: pre-wrap;">' + (error ? error.message : msg) + '</pre>' +
                         '</div>';
                 }
                 console.error('Preview Error:', error || msg);
@@ -45,8 +49,8 @@ const PreviewFrame: React.FC<PreviewFrameProps> = ({ files }) => {
                  const root = document.getElementById('root');
                  if (root) {
                      root.innerHTML = '<div class="error-container">' +
-                        '<h3 style="margin-top:0">Async Error</h3>' + 
-                        '<pre style="white-space: pre-wrap;">' + event.reason + '</pre>' + 
+                        '<h3 style="margin-top:0">Async Error</h3>' +
+                        '<pre style="white-space: pre-wrap;">' + event.reason + '</pre>' +
                         '</div>';
                  }
                  console.error('Unhandled Rejection:', event.reason);
@@ -61,6 +65,7 @@ const PreviewFrame: React.FC<PreviewFrameProps> = ({ files }) => {
           .loading { display: flex; justify-content: center; align-items: center; height: 100vh; color: #9ca3af; font-family: sans-serif; gap: 8px; }
           .spinner { width: 16px; height: 16px; border: 2px solid #e5e7eb; border-top-color: #9ca3af; border-radius: 50%; animation: spin 1s linear infinite; }
           @keyframes spin { to { transform: rotate(360deg); } }
+          ${cssContent.replace(/<\/style>/gi, '<\\/style>')}
         </style>
       </head>
       <body>
@@ -70,10 +75,11 @@ const PreviewFrame: React.FC<PreviewFrameProps> = ({ files }) => {
                 Building...
             </div>
         </div>
-        
+
         <script type="module">
-          // Import dependencies from esm.sh with pinned versions to prevent multi-react issues
           import React from "https://esm.sh/react@18.3.1?dev";
+          import * as ReactJSXRuntime from "https://esm.sh/react@18.3.1/jsx-runtime?dev&deps=react@18.3.1";
+          import * as ReactJSXDevRuntime from "https://esm.sh/react@18.3.1/jsx-dev-runtime?dev&deps=react@18.3.1";
           import ReactDOM from "https://esm.sh/react-dom@18.3.1?dev&deps=react@18.3.1";
           import { createRoot } from "https://esm.sh/react-dom@18.3.1/client?dev&deps=react@18.3.1";
           import * as LucideReact from "https://esm.sh/lucide-react@0.469.0?dev&deps=react@18.3.1";
@@ -81,30 +87,33 @@ const PreviewFrame: React.FC<PreviewFrameProps> = ({ files }) => {
           import { twMerge } from "https://esm.sh/tailwind-merge@2.6.0?dev";
           import * as HeadlessUI from "https://esm.sh/@headlessui/react@2.2.0?dev&deps=react@18.3.1,react-dom@18.3.1";
 
+          const jsxRuntime = { ...ReactJSXRuntime, ...(ReactJSXRuntime.default || {}), __esModule: true };
+          const jsxDevRuntime = { ...ReactJSXDevRuntime, ...(ReactJSXDevRuntime.default || {}), __esModule: true };
+
           window.__deps = {
-            'react': React,
-            'react-dom': { ...ReactDOM, default: ReactDOM },
-            'react-dom/client': { createRoot },
+            'react': { ...React, default: React, __esModule: true },
+            'react/jsx-runtime': jsxRuntime,
+            'react/jsx-dev-runtime': jsxDevRuntime,
+            'react-dom': { ...ReactDOM, default: ReactDOM, __esModule: true },
+            'react-dom/client': { createRoot, default: { createRoot }, __esModule: true },
             'lucide-react': LucideReact,
-            'clsx': { default: clsx, clsx },
-            'tailwind-merge': { default: twMerge, twMerge },
+            'clsx': { default: clsx, clsx, __esModule: true },
+            'tailwind-merge': { default: twMerge, twMerge, __esModule: true },
             '@headlessui/react': HeadlessUI
           };
         </script>
 
         <script>
-          // Pass the files data into the iframe
           window.files = ${JSON.stringify(codeFiles).replace(/<\/script>/g, '<\\/script>')};
-          
           window.modules = {};
-          
+
           function resolvePath(base, relative) {
              const stack = base.split('/');
-             stack.pop(); 
-             
+             stack.pop();
+
              const parts = relative.split('/');
              for (let i = 0; i < parts.length; i++) {
-               if (parts[i] === '.') continue;
+               if (parts[i] === '.' || parts[i] === '') continue;
                if (parts[i] === '..') stack.pop();
                else stack.push(parts[i]);
              }
@@ -113,18 +122,20 @@ const PreviewFrame: React.FC<PreviewFrameProps> = ({ files }) => {
 
           function requireModule(path, currentFile) {
              if (window.__deps && window.__deps[path]) return window.__deps[path];
-             if (path === 'react-dom') return window.__deps['react-dom'];
-             
+             if (path.endsWith('.css')) return {};
+
              let resolvedPath;
              if (path.startsWith('./') || path.startsWith('../')) {
                 resolvedPath = resolvePath(currentFile, path);
+             } else if (path.startsWith('@/')) {
+                resolvedPath = path.slice(2);
              } else {
                 resolvedPath = path.replace(/^[./]+/, '');
              }
-             
+
              const extensions = ['', '.tsx', '.ts', '.js', '.jsx'];
              let key = null;
-             
+
              if (window.modules[resolvedPath]) {
                  key = resolvedPath;
              } else {
@@ -136,7 +147,7 @@ const PreviewFrame: React.FC<PreviewFrameProps> = ({ files }) => {
                      }
                  }
              }
-             
+
              if (!key) {
                  for (const ext of extensions) {
                      const tryKey = resolvedPath + '/index' + ext;
@@ -152,24 +163,22 @@ const PreviewFrame: React.FC<PreviewFrameProps> = ({ files }) => {
                  if (!mod.initialized) {
                      const contextRequire = (p) => requireModule(p, key);
                      const process = { env: { NODE_ENV: 'development' } };
-                     // Retrieve React from dependencies for the module scope
-                     const React = window.__deps['react'];
-                     
-                     mod.fn(mod.exports, contextRequire, mod, process, React); 
+                     const React = window.__deps['react'].default;
+
                      mod.initialized = true;
+                     mod.fn(mod.exports, contextRequire, mod, process, React);
                  }
                  return mod.exports;
              }
-             
+
              throw new Error('Cannot find module: ' + path + ' (requested from ' + currentFile + ')');
           }
 
           let attempt = 0;
           function compileAndRun() {
-            // Wait for both Babel and dependencies
             if (!window.Babel || !window.__deps) {
                 attempt++;
-                if (attempt > 50) { // 5 seconds timeout
+                if (attempt > 50) {
                     const root = document.getElementById('root');
                     root.innerHTML = '<div class="error-container">Timeout loading dependencies. Network may be slow.</div>';
                     return;
@@ -179,9 +188,8 @@ const PreviewFrame: React.FC<PreviewFrameProps> = ({ files }) => {
             }
 
             try {
-                const React = window.__deps['react'];
-                
-                // Define ErrorBoundary inside compileAndRun so it has access to React
+                const React = window.__deps['react'].default;
+
                 class ErrorBoundary extends React.Component {
                     constructor(props) {
                       super(props);
@@ -201,48 +209,63 @@ const PreviewFrame: React.FC<PreviewFrameProps> = ({ files }) => {
                     }
                 }
 
-                // 1. Register all files
                 window.files.forEach(file => {
-                    const result = Babel.transform(file.content, {
-                        presets: ['react', 'typescript', ['env', { modules: 'commonjs' }]],
-                        filename: file.name
-                    });
-                    // Wrap in a function that accepts exports, require, module, process, React
+                    let result;
+                    try {
+                        result = Babel.transform(file.content, {
+                            presets: [
+                                ['react', { runtime: 'automatic' }],
+                                'typescript',
+                                ['env', { modules: 'commonjs' }]
+                            ],
+                            filename: file.name
+                        });
+                    } catch (compileErr) {
+                        throw new Error('Syntax error in ' + file.name + ': ' + compileErr.message);
+                    }
                     const fn = new Function('exports', 'require', 'module', 'process', 'React', result.code);
-                    
+
                     window.modules[file.name] = {
                         exports: {},
                         fn: fn,
                         initialized: false
                     };
                 });
-                
-                // 2. Mount App
-                const AppExports = requireModule('./App', 'root');
+
+                let AppExports;
+                try {
+                    AppExports = requireModule('./App', 'root');
+                } catch (e) {
+                    if (window.modules['src/App.tsx'] || window.modules['src/App.jsx']) {
+                        AppExports = requireModule('./src/App', 'root');
+                    } else {
+                        throw e;
+                    }
+                }
+
                 const App = AppExports.default;
-                
                 if (!App) throw new Error('App.tsx does not have a default export');
 
                 const rootElement = document.getElementById('root');
                 const { createRoot } = window.__deps['react-dom/client'];
-                
+
                 const root = createRoot(rootElement);
                 root.render(
-                    React.createElement(ErrorBoundary, null, 
+                    React.createElement(ErrorBoundary, null,
                         React.createElement(App)
                     )
                 );
-                
+
             } catch (err) {
                 const root = document.getElementById('root');
                 root.innerHTML = '<div class="error-container">' +
-                    '<h3 style="margin-top:0">Preview Setup Error</h3>' + 
-                    '<pre style="white-space: pre-wrap;">' + err.toString() + '</pre>' + 
+                    '<h3 style="margin-top:0">Preview Setup Error</h3>' +
+                    '<pre style="white-space: pre-wrap;">' + err.toString() + '</pre>' +
                     '</div>';
                 console.error('Preview Setup Error:', err);
             }
           }
-          
+
           if (document.readyState === 'loading') {
               document.addEventListener('DOMContentLoaded', compileAndRun);
           } else {
@@ -252,18 +275,11 @@ const PreviewFrame: React.FC<PreviewFrameProps> = ({ files }) => {
       </body>
       </html>
     `;
-
-    const doc = iframeRef.current.contentDocument;
-    if (doc) {
-      doc.open();
-      doc.write(html);
-      doc.close();
-    }
   }, [files]);
 
   return (
     <iframe
-      ref={iframeRef}
+      srcDoc={srcDoc}
       title="Preview"
       className="w-full h-full border-0 bg-white"
       sandbox="allow-scripts allow-same-origin allow-modals"
